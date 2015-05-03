@@ -3,12 +3,20 @@ Programming in Hopac
 
 Hopac provides a programming model that is heavily inspired by
 [John Reppy](http://people.cs.uchicago.edu/~jhr/)'s **Concurrent ML** language.
+Other languages that provide similar or related models include
+[Racket](http://docs.racket-lang.org/reference/concurrency.html), Clojure
+[core.async](https://github.com/clojure/core.async/), and
+[Go](https://golang.org/).  Racket's model is also inspired by CML.  Clojure's
+core.async and Go can be seen as providing a subset of the functionality
+provided by CML.  In particular, they lack the higher-order events and negative
+acknowledgments of CML.
+
 The book
 [Concurrent Programming in ML](http://www.cambridge.org/us/academic/subjects/computer-science/distributed-networked-and-mobile-computing/concurrent-programming-ml)
-is the most comprehensive introduction to Concurrent ML style programming.  This
-document contains some discussion and examples on Hopac programming techniques.
-In the future, this document might grow to a proper introduction to Hopac.
-Feedback is welcome!
+is the most comprehensive introduction to Concurrent ML style programming.  It
+is highly recommended background reading.  This document contains some
+discussion and examples on Hopac programming techniques.  In the future, this
+document might grow to a proper introduction to Hopac.  Feedback is welcome!
 
 The
 [Hopac.fsi](https://github.com/Hopac/Hopac/blob/master/Libs/Hopac/Hopac.fsi)
@@ -58,15 +66,15 @@ open it up a bit.
   with user defined procedures to
   build[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.guard)
   more
-  complex[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNack)
+  complex[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNackJob)
   alternatives that encapsulate concurrent client-server protocols.
-* **Selective** means that a form of
+  * **Selective** means that a form of
   choice[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose)
   or disjunction between alternatives is supported.  An alternative can be
   constructed that, for example, offers to
-  give[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.Alt.give)
+  give[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.give)
   a message to another job *or*
-  take[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.Alt.take)
+  take[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.take)
   a message from another job.  The choice of which operation is performed then
   depends on whichever alternative becomes available at run time.
 * **Synchronous** means that rather than building up a queue of messages for
@@ -434,25 +442,23 @@ The `cell` constructor then creates the channels and starts the server loop:
 let cell x = Job.delay <| fun () ->
   let c = {getCh = Ch.Now.create (); putCh = Ch.Now.create ()}
   let rec server x =
-    Alt.select [Ch.Alt.take c.putCh   >>=? fun x -> server x
-                Ch.Alt.give c.getCh x >>=? fun () -> server x]
+    Alt.choose [Ch.take c.putCh   >>=? fun x -> server x
+                Ch.give c.getCh x >>=? fun () -> server x]
   Job.start (server x) >>% c
 ```
 
 In the server loop, the above implementation uses
-selective[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.select)
-communication.  It uses a
-choice[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose)
-of two primitive
+selective[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose)
+communication.  It uses a choice of two primitive
 alternatives[*](http://hopac.github.io/Hopac/Hopac.html#def:type%20Hopac.Alt):
 
 * The first alternative
-  takes[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.Alt.take)
+  takes[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.take)
   a value on the `putCh` channel from a client and
   then[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.Infixes.%3E%3E=?)
   loops.
 * The second alternative
-  gives[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.Alt.take)
+  gives[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.take)
   a value on the `getCh` channel to a client and
   then[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.Infixes.%3E%3E=?)
   loops.
@@ -471,8 +477,8 @@ let cell x = Job.delay <| fun () ->
   let c = {getCh = Ch.Now.create (); putCh = Ch.Now.create ()}
   Job.server
    (Job.iterate x <| fun x ->
-    Alt.select [Ch.Alt.take c.putCh
-                Ch.Alt.give c.getCh x >>%? x]) >>% c
+    Alt.choose [Ch.take c.putCh
+                Ch.give c.getCh x >>%? x]) >>% c
 ```
 
 The above also makes use of the function
@@ -546,16 +552,15 @@ let CompareBool (comparand: ref<bool>)
                 (input: Alt<'x>)
                 (onTrue: 'x -> Job<unit>)
                 (onFalse: 'x -> Job<unit>) : Job<unit> =
-  Alt.pick input >>= fun x ->
+  input >>= fun x ->
   if !comparand then onTrue x else onFalse x
 ```
 
-The `CompareBool` function creates a job that first
-picks[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.pick)
-the `input` alternative and then performs either the `onTrue` or the `onFalse`
-action depending on the value of `comparand`.  As you can see, the above
-`CompareBool` job doesn't care about the type of the alternatives.  It just
-copies the received value `x` to the chosen output.
+The `CompareBool` function creates a job that first binds the `input`
+alternative and then performs either the `onTrue` or the `onFalse` action
+depending on the value of `comparand`.  As you can see, the above `CompareBool`
+job doesn't care about the type of the alternatives.  It just copies the
+received value `x` to the chosen output.
 
 Let's then consider the `Delay` box.  Making another educated guess and
 simplifying a bit, it has two input events `Start` and `Stop` (I leave `Pause`
@@ -573,15 +578,14 @@ let Delay (duration: ref<TimeSpan>)
           (stop: Alt<'y>)
           (finished: 'x -> Job<unit>)
           (aborted: 'y -> Job<unit>) : Job<unit> =
-  Alt.pick start >>= fun x ->
-  Alt.select [stop                             >>=? fun y -> aborted y
-              Timer.Global.timeOut (!duration) >>=? fun () -> finished x]
+  start >>= fun x ->
+  Alt.choose [stop                >>=? fun y -> aborted y
+              timeOut (!duration) >>=? fun () -> finished x]
 ```
 
-The `Delay` function creates a job that first
-picks[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.pick)
-the `start` alternative.  It then
-selects[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.select)
+The `Delay` function creates a job that first binds the `start` alternative.  It
+then
+chooses[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose)
 from two alternatives.  The first one is the given `stop` alternative and in
 case that is committed to, the value obtained from `stop` is given to the
 `aborted` action.  The second alternative starts a
@@ -611,12 +615,12 @@ let ch_3 = Ch.Now.create ()
 let bMoved = ref false
 // ...
 do! CompareBool bMoved
-                (Ch.Alt.take ch_1)
+                (Ch.take ch_1)
                 (Ch.give ch_2)
                 (fun _ -> Job.unit ())
     |> Job.forever |> Job.server
 do! Delay (ref (TimeSpan.FromSeconds 3.14))
-          (Ch.Alt.take ch_2)
+          (Ch.take ch_2)
           (Alt.never ())
           (Ch.give ch_3)
           (fun _ -> Job.unit ())
@@ -641,13 +645,14 @@ Starting and Waiting for Jobs
 -----------------------------
 
 After running through the introductory examples, let's take a step back and just
-play a bit with jobs.  Here is a simple job that has a loop that first sleeps
+play a bit with jobs.  Here is a simple job that has a loop that first
+sleeps[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Timer.Global.timeOut)
 for a second and then prints a given message:
 
 ```fsharp
 let hello what = job {
   for i=1 to 3 do
-    do! Timer.Global.sleep (TimeSpan.FromSeconds 1.0)
+    do! timeOut (TimeSpan.FromSeconds 1.0)
     do printfn "%s" what
 }
 ```
@@ -657,7 +662,7 @@ Let's then start two such jobs roughly half a second a part:
 ```fsharp
 > run <| job {
   do! Job.start (hello "Hello, from a job!")
-  do! Timer.Global.sleep (TimeSpan.FromSeconds 0.5)
+  do! timeOut (TimeSpan.FromSeconds 0.5)
   do! Job.start (hello "Hello, from another job!")
 } ;;
 val it : unit = ()
@@ -681,7 +686,7 @@ allows a parent job to wait for a child job:
 ```fsharp
 > run <| job {
   let! j1 = Promise.start (hello "Hello, from a job!")
-  do! Timer.Global.sleep (TimeSpan.FromSeconds 0.5)
+  do! timeOut (TimeSpan.FromSeconds 0.5)
   let! j2 = Promise.start (hello "Hello, from another job!")
   do! Promise.read j1
   do! Promise.read j2
@@ -701,7 +706,7 @@ clearer.  There is one more unfortunate thing in the above program.  The two
 promises are read in a specific order.  In this program it doesn't really
 matter, but it is a good demonstration of the flexibility of Hopac to show that
 we can indeed avoid this order dependency by using
-selective[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.select)
+selective[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose)
 communication offered by the
 alternative[*](http://hopac.github.io/Hopac/Hopac.html#def:type%20Hopac.Alt)
 mechanism:
@@ -709,13 +714,13 @@ mechanism:
 ```fsharp
 > run <| job {
   let! j1 = Promise.start (hello "Hello, from a job!")
-  do! Timer.Global.sleep (TimeSpan.FromSeconds 0.5)
+  do! timeOut (TimeSpan.FromSeconds 0.5)
   let! j2 = Promise.start (hello "Hello, from another job!")
-  do! Alt.select
-       [Promise.Alt.read j1 >>=? fun () ->
+  do! Alt.choose
+       [Promise.read j1 >>=? fun () ->
           printfn "First job finished first."
           Promise.read j2
-        Promise.Alt.read j2 >>=? fun () ->
+        Promise.read j2 >>=? fun () ->
           printfn "Second job finished first."
           Promise.read j1]
 } ;;
@@ -743,9 +748,9 @@ for starting and waiting for a sequence of jobs.  In this case we don't care
 about the results of the jobs, so `Job.conIgnore` is what we use:
 
 ```fsharp
-> [Timer.Global.sleep (TimeSpan.FromSeconds 0.0) >>. hello "Hello, from first job!" ;
-   Timer.Global.sleep (TimeSpan.FromSeconds 0.3) >>. hello "Hello, from second job!" ;
-   Timer.Global.sleep (TimeSpan.FromSeconds 0.6) >>. hello "Hello, from third job"]
+> [timeOut (TimeSpan.FromSeconds 0.0) >>. hello "Hello, from first job!" ;
+   timeOut (TimeSpan.FromSeconds 0.3) >>. hello "Hello, from second job!" ;
+   timeOut (TimeSpan.FromSeconds 0.6) >>. hello "Hello, from third job"]
 |> Job.conIgnore |> run ;;
 Hello, from first job!
 Hello, from second job!
@@ -1049,95 +1054,49 @@ provides the following primitive alternatives:
 
 ```fsharp
 module Ch =
-  module Alt =
-    val give: Ch<'x> -> 'x -> Alt<unit>
-    val take: Ch<'x> -> Alt<'x>
+  val give: Ch<'x> -> 'x -> Alt<unit>
+  val take: Ch<'x> -> Alt<'x>
 ```
 
-The `Ch.Alt.give`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.Alt.give)
-alternative represents the possibility of giving a value on a channel to another
-concurrent job and the `Ch.Alt.take`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.Alt.take)
-alternative represents the possibility of taking a value from another concurrent
-job on a channel.
+The `Ch.give`
+[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.give) alternative
+represents the possibility of giving a value on a channel to another concurrent
+job and the `Ch.take`
+[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.take) alternative
+represents the possibility of taking a value from another concurrent job on a
+channel.
 
 It is important that primitive alternatives such as these only represent the
 *possibility* of performing the operations.  As we will see shortly, we can form
 a disjunction of alternatives, whether primitive or complex, and commit to
 perform exactly one of those alternatives.
 
-### Picking an Alternative
+### Binding an Alternative
 
-To actually perform an operation made possible by an alternative, the `Alt.pick`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.pick)
-operation is used:
-
-```fsharp
-val pick: Alt<'x> -> Job<'x>
-```
-
-So, for example, to indeed offer to give a value on a channel to another job, a
-job might run the following code:
+To actually perform an operation made possible by an alternative, one can simply
+bind the operation.  So, for example, to indeed offer to give a value on a
+channel to another job, a job might run the following code:
 
 ```fsharp
-do! Alt.pick (Ch.Alt.give aChannel aValue)
+do! Ch.give aChannel aValue
 ```
 
 Likewise, to offer to take a value from another job, the following code could be
 run:
 
 ```fsharp
-let! aValue = Alt.pick (Ch.Alt.take aChannel)
-```
-
-Conceptually, the `Alt.pick` operation *instantiates* the given alternative,
-*waits until* the alternative becomes *available* for picking and then *commits*
-to the alternative and returns the value communicated by the alternative.  In
-the instantiation phase the computation encapsulated by the alternative is
-started.  In the case of the `Ch.Alt.give` operation, for example, it means that
-the job basically registers an offer to give a value on a channel.  If the
-alternative cannot be performed immediately, e.g. no other job has offered to
-take a value on the channel, the job is blocked until the alternative becomes
-available.
-
-### Primitive Alternatives vs Immediate Operations
-
-Before continuing, let's take a moment to consider an aspect of the efficiency
-implications of alternatives.  The channel interface also provides simpler
-immediate versions of the give and take operations:
-
-```fsharp
-val give: Ch<'x> -> 'x -> Job<unit>
-val take: Ch<'x> -> Job<'x>
-```
-
-Contrast the use of alternatives:
-
-```fsharp
-let! aValue = Alt.pick (Ch.Alt.take aChannel)
-do! Alt.pick (Ch.Alt.give aChannel aValue)
-```
-
-and the use of immediate operations:
-
-```fsharp
 let! aValue = Ch.take aChannel
-do! Ch.give aChannel aValue
 ```
 
-Both of the above snippets have the same semantics.  Which version is faster?
-
-In Hopac the answer is that both snippets compile to the exact same code.
-(Assuming that the F# compiler can inline a non-virtual NOP function marked as
-an inline function.)  In fact, the same holds for as long as the alternative
-represents no selective operations.  Now, obviously, when more complex
-alternatives are formed, the selective alternative mechanism must incur some
-overhead compared to non-selective immediate operations.  But in the case only
-primitive alternatives are used, there is no extra overhead.  This is a
-fortunate feature of Hopac as it makes it more appealing to provide interfaces
-to concurrent program modules using abstract composable alternatives rather than
-non-composable immediate operations.
+Conceptually, binding an alternative operation *instantiates* the given
+alternative, *waits until* the alternative becomes *available* and then
+*commits* to the alternative and returns the value communicated by the
+alternative.  In the instantiation phase the computation encapsulated by the
+alternative is started.  In the case of the `Ch.give` operation, for example, it
+means that the job basically registers an offer to give a value on a channel.
+If the alternative cannot be performed immediately, e.g. no other job has
+offered to take a value on the channel, the job is blocked until the alternative
+becomes available.
 
 ### Choose and Wrap
 
@@ -1170,7 +1129,7 @@ such as:
 
 ```fsharp
 do! dialog.Show
-let! answer = Alt.pick <| Alt.choose [
+let! answer = Alt.choose [
        dialog.Yes.Pressed >>=? fun () -> Job.result true
        dialog.No.Pressed  >>=? fun () -> Job.result false
      ]
@@ -1184,18 +1143,18 @@ The operations `Alt.choose` and `>>=?`, also known as *wrap*, have the following
 signatures:
 
 ```fsharp
-val choose: seq<Alt<'x>> -> Alt<'x>
-val (>>=?): Alt<'x> -> ('x -> Job<'y>) -> Alt<'y>
+val choose: seq<#Alt<'x>> -> Alt<'x>
+val (>>=?): Alt<'x> -> ('x -> #Job<'y>) -> Alt<'y>
 ```
 
 The `Alt.choose`
 [*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose)
 operation forms a disjunction of the sequence of alternatives given to it.  When
-such a disjunction is picked, the alternatives involved in the disjunction are
+such a disjunction is bound, the alternatives involved in the disjunction are
 instantiated one-by-one.  Assuming no alternative is immediately available, the
 job is blocked, waiting for any one of the alternatives to become available.
 When one of the alternatives in the disjunction becomes available, the
-alternative is picked and committed to and the other alternatives are canceled.
+alternative is committed to and the other alternatives are canceled.
 
 The wrap `>>=?`
 [*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.Infixes.%3E%3E=?)
@@ -1214,7 +1173,7 @@ value for further processing.  We could also just continue processing in the
 wrapper:
 
 ```fsharp
-do! Alt.pick <| Alt.choose [
+do! Alt.choose [
       dialog.Yes.Pressed >>=? fun () ->
         // Perform action on Yes.
       dialog.No.Pressed  >>=? fun () ->
@@ -1227,23 +1186,19 @@ ordinary conditional statements.
 
 A key point in the types of the `choose` and `>>=?` operations is that they
 create new alternatives and those alternatives are first-class values just like
-the primitive `give` and `take` alternatives on channels.  For the common cases
-of simply picking from a choice of alternatives or combining just two
-alternatives the operations `Alt.select`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.select)
-and `<|>`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.Infixes.%3C|%3E)
-are provided.  Their semantics can be described as follows:
+the primitive `give` and `take` alternatives on channels.  For the common case
+of simply combining just two
+alternatives the operation `<|>?`
+[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.Infixes.%3C|%3E?)
+is provided.  Its semantics can be described as follows:
 
 ```fsharp
-let select alts = pick (choose alts)
-let (<|>) a1 a2 = choose [a1; a2]
+let (<|>?) a1 a2 = choose [a1; a2]
 ```
 
-In fact, the above definition of `select` is essentially how the operation is
-internally implemented.  The binary choice `<|>` operation can be, and is,
-implemented internally as a slightly more efficient special case (avoiding the
-construction of the sequence).
+The binary choice `<|>?` operation can be, and is, implemented internally as a
+slightly more efficient special case (avoiding the construction of the
+sequence).
 
 It is also worth pointing out that `choose` allows synchronizing on a sequence
 of alternatives that is computed dynamically.  Languages that have a special
@@ -1260,7 +1215,7 @@ the `guard`
 combinator that allows an alternative to be computed at instantiation time.
 
 ```fsharp
-val guard: Job<Alt<'x>> -> Alt<'x>
+val guard: Job<#Alt<'x>> -> Alt<'x>
 ```
 
 The idea of the `guard` combinator is that it allows one to encapsulate a
@@ -1272,8 +1227,7 @@ constructing the message, sending it to the server and then waiting for the
 reply in a form that can then be invoked an arbitrary number of times.
 
 Recall in the Kismet sketch it was mentioned that simulations like games often
-have their own notion of time and that the wall-clock time provided by
-`Timer.Global.timeOut`
+have their own notion of time and that the wall-clock time provided by `timeOut`
 [*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Timer.Global.timeOut)
 probably doesn't provide the desired semantics.  A simple game might be designed
 to update the simulation of the game world 60 times per second to match with a
@@ -1332,7 +1286,7 @@ let atTime (atTime: Ticks) : Alt<unit> =
   Alt.guard << Job.delay <| fun () ->
   let replyCh : Ch<unit> = Ch.Now.create ()
   Ch.send timerReqCh (atTime, replyCh) >>%
-  Ch.Alt.take replyCh
+  Ch.take replyCh
 ```
 
 A detail worth pointing out above is the use of the `Ch.send`
@@ -1420,25 +1374,25 @@ idempotent.  If a client makes a request to the time server and later aborts the
 request, that is, doesn't wait for the server's reply, it causes no harm.
 Sometimes things are not that simple and a server needs to know whether client
 actually committed to a transaction.  Hopac, like CML, supports this via the
-`withNack`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNack)
+`withNackJob`
+[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNackJob)
 combinator:
 
 ```fsharp
-val withNack: (Alt<unit> -> Job<Alt<'x>>) -> Alt<'x>
+val withNackJob: (Promise<unit> -> #Job<#Alt<'x>>) -> Alt<'x>
 ```
 
-The `withNack` combinator is like `guard` in that it allows an alternative to be
-computed at instantiation time.  Additionally, `withNack` creates a *negative
-acknowledgment alternative* that it gives to the encapsulated alternative
-constructor.  If the constructed alternative is ultimately not committed to, the
-negative acknowledgment alternative becomes available.  Consider the following
-example:
+The `withNackJob` combinator is like `guard` in that it allows an alternative to
+be computed at instantiation time.  Additionally, `withNackJob` creates a
+*negative acknowledgment alternative*, which is actually represented as a
+promise, that it gives to the encapsulated alternative constructor.  If the
+constructed alternative is ultimately not committed to, the negative
+acknowledgment alternative becomes available.  Consider the following example:
 
 ```fsharp
-let verbose alt = Alt.withNack <| fun nack ->
+let verbose alt = Alt.withNackJob <| fun nack ->
   printf "Instantiated and "
-  Job.start (Alt.pick nack |>> fun () -> printfn "aborted.") >>%
+  Job.start (nack |>> fun () -> printfn "aborted.") >>%
   (alt |>>? fun x -> printfn "committed to." ; x)
 ```
 
@@ -1446,7 +1400,7 @@ The above implements an alternative constructor that simply prints out what
 happens.  Let's consider three interactions using a `verbose` alternative.
 
 ```fsharp
-> run (Alt.select [verbose (Alt.always 1); Alt.always 2]) ;;
+> run (Alt.choose [verbose (Alt.always 1); Alt.always 2]) ;;
 Instantiated and committed to.
 val it : int = 1
 ```
@@ -1455,7 +1409,7 @@ In the first case above, a verbose alternative is instantiated and committed to.
 The negative acknowledgment is created, but does not become enabled.
 
 ```fsharp
-> run (Alt.select [verbose (Alt.never ()); Alt.always 2]) ;;
+> run (Alt.choose [verbose (Alt.never ()); Alt.always 2]) ;;
 Instantiated and aborted.
 val it : int = 2
 ```
@@ -1464,7 +1418,7 @@ In the second case above, a verbose alternative is instantiated and aborted as
 the second alternative is committed to.
 
 ```fsharp
-> run (Alt.select [Alt.always 1; verbose (Alt.always 2)]) ;;
+> run (Alt.choose [Alt.always 1; verbose (Alt.always 2)]) ;;
 val it : int = 1
 ```
 
@@ -1479,9 +1433,9 @@ that otherwise couldn't be properly encapsulated as alternatives.
 
 #### Example: Lock Server
 
-An example that illustrates how `withNack`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNack)
-can be used to encapsulate a non-idempotent request as an alternative is the
+An example that illustrates how `withNackJob`
+[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNackJob) can
+be used to encapsulate a non-idempotent request as an alternative is the
 implementation of a *lock server*.  Here is a signature of a lock server:
 
 ```fsharp
@@ -1499,7 +1453,7 @@ alternative within a selective communication.  A client could, for example, try
 to obtain one of several locks and proceed accordingly:
 
 ```fsharp
-Alt.select [acquire server lockA >>=? fun () ->
+Alt.choose [acquire server lockA >>=? fun () ->
               (* critical section A *)
               release server lockA
             acquire server lockB >>=? fun () ->
@@ -1510,8 +1464,8 @@ Alt.select [acquire server lockA >>=? fun () ->
 Or a client could use a timeout to avoid waiting indefinitely for a lock:
 
 ```fsharp
-Alt.select [acquire server lock >>=? (* critical section *)
-            Timer.Global.timeOut duration >>=? (* do something else *)]
+Alt.choose [acquire server lock >>=? (* critical section *)
+            timeOut duration >>=? (* do something else *)]
 ```
 
 What is important here is that the `acquire` alternative must work correctly
@@ -1566,21 +1520,21 @@ code snippets of this example in an interactive session.  As this type safety
 issue is not an essential aspect of the example, we leave it as an exercise for
 the reader to consider how to plug this typing hole.
 
-The `acquire` operation is where we'll use `withNack`:
+The `acquire` operation is where we'll use `withNackJob`:
 
 ```fsharp
-let acquire s (Lock lock) = Alt.withNack <| fun abortAlt ->
+let acquire s (Lock lock) = Alt.withNackJob <| fun abortAlt ->
   let replyCh = Ch.Now.create ()
   Ch.send s.reqCh (Acquire (lock, replyCh, abortAlt)) >>%
-  Ch.Alt.take replyCh
+  Ch.take replyCh
 ```
 
-Using `withNack` a negative acknowledgment alternative, `abortAlt`, is created
-and then a reply channel, `replyCh`, is allocated and a request is created and
-sent to the lock server `s`.  An asynchronous `send`
-[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.send)
-operation is used as there is no point in waiting for the server at this point.
-Finally the alternative of taking the server's reply is returned.
+Using `withNackJob` a negative acknowledgment alternative, `abortAlt`, is
+created and then a reply channel, `replyCh`, is allocated and a request is
+created and sent to the lock server `s`.  An asynchronous `send`
+[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Ch.send) operation
+is used as there is no point in waiting for the server at this point.  Finally
+the alternative of taking the server's reply is returned.
 
 Note that a new pair of a negative acknowledgment alternative and reply channel
 is created each time an alternative constructed with `acquire` is instantiated.
@@ -1589,7 +1543,7 @@ the same alternative and it will work correctly:
 
 ```fsharp
 let acq = acquire s l
-do! Alt.select [acq >>=? /* ... */
+do! Alt.choose [acq >>=? /* ... */
                 acq >>=? /* ... */]
 ```
 
@@ -1609,7 +1563,7 @@ let start = Job.delay <| fun () ->
           pending.Enqueue (replyCh, abortAlt)
           Job.unit ()
         | _ ->
-          Alt.select [Ch.Alt.give replyCh () |>>? fun () ->
+          Alt.choose [Ch.give replyCh () |>>? fun () ->
                         locks.Add (lock, Queue<_>())
                       abortAlt]
      | Release lock ->
@@ -1621,7 +1575,7 @@ let start = Job.delay <| fun () ->
               Job.unit ()
             else
               let (replyCh, abortAlt) = pending.Dequeue ()
-              Alt.select [Ch.Alt.give replyCh ()
+              Alt.choose [Ch.give replyCh ()
                           abortAlt >>=? assign]
           assign ()
         | _ ->
@@ -1631,10 +1585,10 @@ let start = Job.delay <| fun () ->
 
 As usual, the above server is implemented as a job that loops indefinitely
 taking requests from the server's request channel.  The crucial bits in the
-above implementation are the uses of `select`.  In both cases, the server
+above implementation are the uses of `choose`.  In both cases, the server
 selects between giving the lock to the client and aborting the transaction using
 the reply channel and the abort alternative, which was implemented by the client
-using a negative acknowledgment alternative created by the `withNack`
+using a negative acknowledgment alternative created by the `withNackJob`
 combinator.
 
 You probably noticed the comment in the above server implementation in the case
@@ -1696,7 +1650,7 @@ Alt.choose
   Alt.delay <| fun () -> printfn "B" ; Alt.always 2]
 ```
 
-In Hopac, picking the above alternative prints `A` and nothing else.  In CML,
+In Hopac, binding the above alternative prints `A` and nothing else.  In CML,
 the similar event would print both `A` and `B`.  In other words, in the initial
 phase, Hopac evaluates alternatives *lazily*, while CML evaluates events
 *eagerly*.  Hopac can therefore run more efficiently in cases where an
@@ -1741,7 +1695,3 @@ Going Further
 For learning more about Concurrent ML style programming, I highly recommend
 [John Reppy](http://people.cs.uchicago.edu/~jhr/)'s book
 [Concurrent Programming in ML](http://www.cambridge.org/us/academic/subjects/computer-science/distributed-networked-and-mobile-computing/concurrent-programming-ml).
-
-The wiki also has the page
-[Questions and Answers](https://github.com/Hopac/Hopac/wiki/Questions-and-Answers).
-Feel free to add questions there.

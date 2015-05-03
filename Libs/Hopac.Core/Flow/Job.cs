@@ -16,7 +16,8 @@ namespace Hopac {
     public abstract class JobBind<X, Y> : Job<Y> {
       private Job<X> xJ;
       ///
-      public JobBind(Job<X> xJ) { this.xJ = xJ; }
+      [MethodImpl(AggressiveInlining.Flag)]
+      public Job<Y> InternalInit(Job<X> xJ) { this.xJ = xJ; return this; }
       ///
       public abstract Job<Y> Do(X x);
       internal override void DoJob(ref Worker wr, Cont<Y> yK) {
@@ -111,10 +112,52 @@ namespace Hopac {
     }
 
     ///
+    public abstract class JobWhileDoDelay<X> : Job<Unit> {
+      ///
+      public abstract Job<X> Do();
+      internal override void DoJob(ref Worker wr, Cont<Unit> uK) {
+        var xJ = Do();
+        if (null != xJ)
+          xJ.DoJob(ref wr, new ContWhile(this, uK));
+        else
+          Work.Do(uK, ref wr);
+      }
+      private sealed class ContWhile : Cont<X> {
+        private JobWhileDoDelay<X> uJ;
+        private Cont<Unit> uK;
+        internal ContWhile(JobWhileDoDelay<X> uJ, Cont<Unit> uK) {
+          this.uJ = uJ;
+          this.uK = uK;
+        }
+        internal override Proc GetProc(ref Worker wr) {
+          return uK.GetProc(ref wr);
+        }
+        internal override void DoHandle(ref Worker wr, Exception e) {
+          uK.DoHandle(ref wr, e);
+        }
+        internal override void DoWork(ref Worker wr) {
+          var xJ = uJ.Do();
+          if (null != xJ)
+            xJ.DoJob(ref wr, this);
+          else
+            Work.Do(uK, ref wr);
+        }
+        internal override void DoCont(ref Worker wr, X value) {
+          var xJ = uJ.Do();
+          if (null != xJ)
+            xJ.DoJob(ref wr, this);
+          else
+            Work.Do(uK, ref wr);
+        }
+      }
+    }
+
+    ///
     public sealed class JobJoin<X, JX> : Job<X> where JX : Job<X> {
       private Job<JX> xJJ;
       ///
-      public JobJoin(Job<JX> xJJ) { this.xJJ = xJJ; }
+      [MethodImpl(AggressiveInlining.Flag)]
+      public Job<X> InternalInit(Job<JX> xJJ) { this.xJJ = xJJ; return this; }
       internal override void DoJob(ref Worker wr, Cont<X> xK) {
         xJJ.DoJob(ref wr, new ContJoin(xK));
       }
@@ -137,47 +180,47 @@ namespace Hopac {
     }
 
     ///
-    public abstract class JobTryInBase<X, Y> : Job<Y> {
+    public abstract class JobTryInCont<X, Y> : Cont<X> {
+      internal Cont<Y> yK;
       ///
       public abstract Job<Y> DoIn(X x);
       ///
       public abstract Job<Y> DoExn(Exception e);
-
-      internal sealed class ContTryIn : Cont<X> {
-        private JobTryInBase<X, Y> yJ;
-        private Cont<Y> yK;
-        internal ContTryIn(JobTryInBase<X, Y> yJ, Cont<Y> yK) {
-          this.yJ = yJ;
-          this.yK = yK;
-        }
-        internal override Proc GetProc(ref Worker wr) {
+      internal override Proc GetProc(ref Worker wr) {
           return Handler.GetProc(ref wr, ref yK);
-        }
-        internal override void DoHandle(ref Worker wr, Exception e) {
-          var yK = this.yK;
-          wr.Handler = yK;
-          yJ.DoExn(e).DoJob(ref wr, yK);
-        }
-        internal override void DoWork(ref Worker wr) {
-          var yK = this.yK;
-          wr.Handler = yK;
-          yJ.DoIn(this.Value).DoJob(ref wr, yK);
-        }
-        internal override void DoCont(ref Worker wr, X x) {
-          var yK = this.yK;
-          wr.Handler = yK;
-          yJ.DoIn(x).DoJob(ref wr, yK);
-        }
       }
+      internal override void DoHandle(ref Worker wr, Exception e) {
+        var yK = this.yK;
+        wr.Handler = yK;
+        this.DoExn(e).DoJob(ref wr, yK);
+      }
+      internal override void DoWork(ref Worker wr) {
+        var yK = this.yK;
+        wr.Handler = yK;
+        this.DoIn(this.Value).DoJob(ref wr, yK);
+      }
+      internal override void DoCont(ref Worker wr, X x) {
+        var yK = this.yK;
+        wr.Handler = yK;
+        this.DoIn(x).DoJob(ref wr, yK);
+      }
+    }
+
+    ///
+    public abstract class JobTryInBase<X, Y> : Job<Y> {
+      ///
+      public abstract JobTryInCont<X, Y> DoCont();
     }
 
     ///
     public abstract class JobTryIn<X, Y> : JobTryInBase<X, Y> {
       private Job<X> xJ;
       ///
-      public JobTryIn(Job<X> xJ) { this.xJ = xJ; }
+      [MethodImpl(AggressiveInlining.Flag)]
+      public Job<Y> InternalInit(Job<X> xJ) { this.xJ = xJ; return this; }
       internal override void DoJob(ref Worker wr, Cont<Y> yK) {
-        var xK = new ContTryIn(this, yK);
+        var xK = this.DoCont();
+        xK.yK = yK;
         wr.Handler = xK;
         xJ.DoJob(ref wr, xK);
       }
@@ -188,49 +231,73 @@ namespace Hopac {
       ///
       public abstract Job<X> DoDelay();
       internal override void DoJob(ref Worker wr, Cont<Y> yK) {
-        var xK = new ContTryIn(this, yK);
+        var xK = this.DoCont();
+        xK.yK = yK;
         wr.Handler = xK;
         DoDelay().DoJob(ref wr, xK);
       }
     }
 
     ///
-    public abstract class JobTryWith<X> : Job<X> {
-      private Job<X> xJ;
-      ///
-      public JobTryWith(Job<X> xJ) { this.xJ = xJ; }
+    public abstract class ContTryWith<X> : Cont<X> {
+      private Cont<X> xK;
       ///
       public abstract Job<X> DoExn(Exception e);
+      [MethodImpl(AggressiveInlining.Flag)]
+      internal Cont<X> Init(Cont<X> xK) {
+        this.xK = xK;
+        return this;
+      }
+      internal override Proc GetProc(ref Worker wr) {
+        return Handler.GetProc(ref wr, ref xK);
+      }
+      internal override void DoHandle(ref Worker wr, Exception e) {
+        var xK = this.xK;
+        wr.Handler = xK;
+        this.DoExn(e).DoJob(ref wr, xK);
+      }
+      internal override void DoWork(ref Worker wr) {
+        var xK = this.xK;
+        wr.Handler = xK;
+        xK.DoCont(ref wr, this.Value);
+      }
+      internal override void DoCont(ref Worker wr, X x) {
+        var xK = this.xK;
+        wr.Handler = xK;
+        xK.DoCont(ref wr, x);
+      }
+    }
+
+    ///
+    public abstract class JobTryWithBase<X> : Job<X> {
+      ///
+      public abstract ContTryWith<X> DoCont();
+    }
+
+    ///
+    public abstract class JobTryWith<X> : JobTryWithBase<X> {
+      private Job<X> xJ;
+      ///
+      [MethodImpl(AggressiveInlining.Flag)]
+      public Job<X> InternalInit(Job<X> xJ) {
+        this.xJ = xJ;
+        return this;
+      }
       internal override void DoJob(ref Worker wr, Cont<X> xK_) {
-        var xK = new ContTryWith(this, xK_);
+        var xK = DoCont().Init(xK_);
         wr.Handler = xK;
         xJ.DoJob(ref wr, xK);
       }
-      private sealed class ContTryWith : Cont<X> {
-        private JobTryWith<X> xJ;
-        private Cont<X> xK;
-        internal ContTryWith(JobTryWith<X> xJ, Cont<X> xK) {
-          this.xJ = xJ;
-          this.xK = xK;
-        }
-        internal override Proc GetProc(ref Worker wr) {
-          return Handler.GetProc(ref wr, ref xK);
-        }
-        internal override void DoHandle(ref Worker wr, Exception e) {
-          var xK = this.xK;
-          wr.Handler = xK;
-          xJ.DoExn(e).DoJob(ref wr, xK);
-        }
-        internal override void DoWork(ref Worker wr) {
-          var xK = this.xK;
-          wr.Handler = xK;
-          xK.DoCont(ref wr, this.Value);
-        }
-        internal override void DoCont(ref Worker wr, X x) {
-          var xK = this.xK;
-          wr.Handler = xK;
-          xK.DoCont(ref wr, x);
-        }
+    }
+
+    ///
+    public abstract class JobTryWithDelay<X> : JobTryWithBase<X> {
+      ///
+      public abstract Job<X> Do();
+      internal override void DoJob(ref Worker wr, Cont<X> xK_) {
+        var xK = DoCont().Init(xK_);
+        wr.Handler = xK;
+        Do().DoJob(ref wr, xK);
       }
     }
 
@@ -238,7 +305,8 @@ namespace Hopac {
     public abstract class JobMap<X, Y> : Job<Y> {
       private Job<X> xJ;
       ///
-      public JobMap(Job<X> xJ) { this.xJ = xJ; }
+      [MethodImpl(AggressiveInlining.Flag)]
+      public Job<Y> InternalInit(Job<X> xJ) { this.xJ = xJ; return this; }
       ///
       public abstract Y Do(X x);
       internal override void DoJob(ref Worker wr, Cont<Y> yK) {
@@ -344,6 +412,15 @@ namespace Hopac {
 
       internal override void DoWork(ref Worker wr) {
         tJ.DoJob(ref wr, tK);
+      }
+    }
+
+    ///
+    public abstract class JobSchedulerBind<X> : Job<X> {
+      ///
+      public abstract Job<X> Do(Scheduler scheduler);
+      internal override void DoJob(ref Worker wr, Cont<X> xK) {
+        Do(wr.Scheduler).DoJob(ref wr, xK);
       }
     }
 

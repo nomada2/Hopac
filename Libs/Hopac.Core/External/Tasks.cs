@@ -10,7 +10,8 @@ namespace Hopac.Core {
   public abstract class BindTaskWithResult<X, Y> : Job<Y> {
     private Task<X> xT;
     ///
-    public BindTaskWithResult(Task<X> xT) { this.xT = xT; }
+    [MethodImpl(AggressiveInlining.Flag)]
+    public Job<Y> InternalInit(Task<X> xT) { this.xT = xT; return this; }
     ///
     public abstract Job<Y> Do(X x);
     private sealed class State : Work {
@@ -41,7 +42,7 @@ namespace Hopac.Core {
       if (TaskStatus.RanToCompletion == xT.Status)
         Job.Do(Do(xT.Result), ref wr, yK);
       else
-        xT.GetAwaiter().UnsafeOnCompleted(new State(wr.Scheduler, this, yK).Ready);
+        xT.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(new State(wr.Scheduler, this, yK).Ready);
     }
   }
 
@@ -49,7 +50,8 @@ namespace Hopac.Core {
   public abstract class BindTask<Y> : Job<Y> {
     private Task uT;
     ///
-    public BindTask(Task uT) { this.uT = uT; }
+    [MethodImpl(AggressiveInlining.Flag)]
+    public Job<Y> InternalInit(Task uT) { this.uT = uT; return this; }
     ///
     public abstract Job<Y> Do();
     private sealed class State : Work {
@@ -84,7 +86,7 @@ namespace Hopac.Core {
       if (TaskStatus.RanToCompletion == uT.Status)
         Job.Do(Do(), ref wr, yK);
       else
-        uT.GetAwaiter().UnsafeOnCompleted(new State(wr.Scheduler, this, yK).Ready);
+        uT.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(new State(wr.Scheduler, this, yK).Ready);
     }
   }
 
@@ -122,7 +124,7 @@ namespace Hopac.Core {
       if (TaskStatus.RanToCompletion == xT.Status)
         Cont.Do(xK, ref wr, xT.Result);
       else
-        xT.GetAwaiter().UnsafeOnCompleted(new State(xT, xK, wr.Scheduler).Ready);
+        xT.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(new State(xT, xK, wr.Scheduler).Ready);
     }
   }
 
@@ -164,7 +166,7 @@ namespace Hopac.Core {
       if (TaskStatus.RanToCompletion == uT.Status)
         Work.Do(uK, ref wr);
       else
-        uT.GetAwaiter().UnsafeOnCompleted(new State(uT, uK, wr.Scheduler).Ready);
+        uT.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(new State(uT, uK, wr.Scheduler).Ready);
     }
   }
 }

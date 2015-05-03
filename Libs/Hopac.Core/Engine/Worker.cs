@@ -115,6 +115,8 @@ namespace Hopac.Core {
 
       var iK = new IdleCont();
 
+      var wdm = (1L << 32) / sr.Events.Length;
+
       wr.Event = sr.Events[me];
 
       while (null != sr) {
@@ -125,8 +127,15 @@ namespace Hopac.Core {
             goto EnterScheduler;
 
         WorkerLoop:
-          wr.WorkStack = work.Next;
           wr.Handler = work;
+          {
+            var next = work.Next;
+            if (null != next && null == sr.WorkStack) {
+              Scheduler.PushAll(sr, next);
+              next = null;
+            }
+            wr.WorkStack = next;
+          }
           work.DoWork(ref wr);
           work = wr.WorkStack;
           if (null != work)
@@ -140,16 +149,17 @@ namespace Hopac.Core {
             goto TryIdle;
 
           Scheduler.Enter(sr);
-
+        EnteredScheduler:
           work = sr.WorkStack;
           if (null == work)
             goto ExitAndTryIdle;
 
         SchedulerGotSome: {
             var last = work;
-            int numWorkStack = sr.NumWorkStack - 1;
-            int n = sr.NumWorkStack >> 2;
-            numWorkStack -= n;
+            int numWorkStack = sr.NumWorkStack;
+            int n = (int)((numWorkStack - 1L) * wdm >> 32) + 1;
+            sr.NumWorkStack = numWorkStack-n;
+            n -= 1;
             while (n > 0) {
               last = last.Next;
               n -= 1;
@@ -159,7 +169,6 @@ namespace Hopac.Core {
             sr.WorkStack = next;
             if (null != next)
               Scheduler.UnsafeSignal(sr);
-            sr.NumWorkStack = numWorkStack;
             Scheduler.Exit(sr);
             goto WorkerLoop;
           }
@@ -185,7 +194,7 @@ namespace Hopac.Core {
             goto SchedulerGotSome;
 
           Scheduler.UnsafeWait(sr, iK.Value, wr.Event);
-          goto EnterScheduler;
+          goto EnteredScheduler;
         } catch (KillException) {
           Scheduler.Kill(sr);
           Scheduler.Dec(sr);
@@ -202,7 +211,7 @@ namespace Hopac.Core {
       }
 
       internal override void DoHandle(ref Worker wr, Exception e) {
-        Handler.DoHandle(null, ref wr, e);
+        Handler.DoHandleNull(ref wr, e);
       }
 
       internal override void DoWork(ref Worker wr) { }

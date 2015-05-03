@@ -159,26 +159,27 @@ type IAsyncDisposable =
 ///
 ///> ... ; ...
 ///> do ...
-///> do! ...
+///> do! ... | async | task | obs
 ///> for ... = ... to ... do ...
 ///> for ... in ... do ...
 ///> if ... then ...
 ///> if ... then ... else ...
 ///> let ... = ... in ...
-///> let! ... = ... | async | task in ...
+///> let! ... = ... | async | task | obs in ...
 ///> match ... with ...
 ///> return ...
 ///> return! ... | async | task
-///> try ... | async | task finally ...
-///> try ... | async | task with ...
+///> try ... finally ...
+///> try ... with ...
 ///> use ... = ... in ...
-///> use! ... = ... | async | task in ...
+///> use! ... = ... in ...
 ///> while ... do ...
 ///
 /// In the above, an ellipsis denotes either a job, an ordinary expression or a
-/// pattern.  A job workflow can also directly bind async operations, which will
-/// be started on a Hopac worker thread (see `Async.toJob`), and tasks (see
-/// `Task.awaitJob`).
+/// pattern.  A job workflow can also directly bind and return from async
+/// operations, which will be started on a Hopac worker thread (see
+/// `Async.toJob`), tasks (see `Task.awaitJob`) and observables (see
+/// `IObservable<'x>.onceAlt`).
 ///
 /// Note that the `Job` module provides more combinators for constructing jobs.
 /// For example, the F# workflow notation does not support `Job.tryFinallyJob`
@@ -190,15 +191,13 @@ type IAsyncDisposable =
 type JobBuilder =
   new: unit -> JobBuilder
 
-  member inline Bind: Async<'x> * ('x   -> Job<'y>) -> Job<'y>
-  member inline Bind:  Task<'x> * ('x   -> Job<'y>) -> Job<'y>
-  member inline Bind:  Task     * (unit -> Job<'y>) -> Job<'y>
-  member inline Bind:   Job<'x> * ('x   -> Job<'y>) -> Job<'y>
+  member inline Bind: IObservable<'x> * ('x   -> Job<'y>) -> Job<'y>
+  member inline Bind:       Async<'x> * ('x   -> Job<'y>) -> Job<'y>
+  member inline Bind:        Task<'x> * ('x   -> Job<'y>) -> Job<'y>
+  member inline Bind:        Task     * (unit -> Job<'y>) -> Job<'y>
+  member inline Bind:         Job<'x> * ('x   -> Job<'y>) -> Job<'y>
 
-  member inline Combine: Async<unit> * Job<'x> -> Job<'x>
-  member inline Combine:  Task<unit> * Job<'x> -> Job<'x>
-  member inline Combine:  Task       * Job<'x> -> Job<'x>
-  member inline Combine:   Job<unit> * Job<'x> -> Job<'x>
+  member inline Combine: Job<unit> * Job<'x> -> Job<'x>
 
   member inline Delay: (unit -> Job<'x>) -> Job<'x>
 
@@ -206,20 +205,15 @@ type JobBuilder =
 
   member inline Return: 'x -> Job<'x>
 
-  member inline ReturnFrom: Async<'x> -> Job<'x>
-  member inline ReturnFrom:  Task<'x> -> Job<'x>
-  member inline ReturnFrom:  Task     -> Job<unit>
-  member inline ReturnFrom:   Job<'x> -> Job<'x>
+  member inline ReturnFrom: IObservable<'x> -> Job<'x>
+  member inline ReturnFrom:       Async<'x> -> Job<'x>
+  member inline ReturnFrom:        Task<'x> -> Job<'x>
+  member inline ReturnFrom:        Task     -> Job<unit>
+  member inline ReturnFrom:         Job<'x> -> Job<'x>
 
-  member inline TryFinally: Async<'x> * (unit -> unit) -> Job<'x>
-  member inline TryFinally:  Task<'x> * (unit -> unit) -> Job<'x>
-  member inline TryFinally:  Task     * (unit -> unit) -> Job<unit>
-  member inline TryFinally:   Job<'x> * (unit -> unit) -> Job<'x>
+  member inline TryFinally: Job<'x> * (unit -> unit) -> Job<'x>
 
-  member inline TryWith: Async<'x> * (exn -> Job<'x>  ) -> Job<'x>
-  member inline TryWith:  Task<'x> * (exn -> Job<'x>  ) -> Job<'x>
-  member inline TryWith:  Task     * (exn -> Job<unit>) -> Job<unit>
-  member inline TryWith:   Job<'x> * (exn -> Job<'x>  ) -> Job<'x>
+  member inline TryWith: Job<'x> * (exn -> Job<'x>) -> Job<'x>
 
   member inline Using: 'x * ('x -> Job<'y>) -> Job<'y> when 'x :> IDisposable
 
@@ -307,13 +301,15 @@ module Proc =
   /// Creates a job that starts a new process.  See also: `queue`, `Job.start`.
   val inline start: Job<unit> -> Job<Proc>
 
-  /// `startIgnore xJ` is equivalent to `Job.Ignore xJ |> start`.
+  /// Creates a job that starts a new process.  `startIgnore xJ` is equivalent
+  /// to `Job.Ignore xJ |> start`.
   val startIgnore: Job<_> -> Job<Proc>
 
   /// Creates a job that queues a new process.  See also: `start`, `Job.queue`.
   val inline queue: Job<unit> -> Job<Proc>
 
-  /// `queueIgnore xJ` is equivalent to `Job.Ignore xJ |> queue`.
+  /// Creates a job that queues a new process.  `queueIgnore xJ` is equivalent
+  /// to `Job.Ignore xJ |> queue`.
   val queueIgnore: Job<_> -> Job<Proc>
 
   /// Returns a job that returns the current process.
@@ -365,43 +361,57 @@ type Job<'x>
 /// Operations on jobs.
 module Job =
   /// Operations on the global scheduler.
+#if DOC
   ///
   /// Note that in a typical program there should only be a few points (maybe
   /// just one) where jobs are started or run outside of job workflows.
+#endif
   module Global =
     /// Starts running the given job on the global scheduler, but does not wait
     /// for the job to finish.  Upon the failure or success of the job, one of
-    /// the given actions is called once.  See also: `abort`.
+    /// the given actions is called once.
+#if DOC
     ///
     /// Note that using this function in a job workflow is not optimal and you
     /// should instead use `Job.start` with the desired exception handling
     /// construct (e.g. `Job.tryIn` or `Job.catch`).
+#endif
     val startWithActions: (exn -> unit) -> ('x -> unit) -> Job<'x> -> unit
 
     /// Starts running the given job on the global scheduler, but does not wait
-    /// for the job to finish.
+    /// for the job to finish.  See also: `queue`, `server`.
+#if DOC
     ///
     /// Note that using this function in a job workflow is not optimal and you
     /// should use `Job.start` instead.
+#endif
     val inline start: Job<unit> -> unit
 
-    /// `startIgnore xJ` is equivalent to `Job.Ignore xJ |> start`.
+    /// Starts running the given job on the global scheduler, but does not wait
+    /// for the job to finish.  `startIgnore xJ` is equivalent to `Job.Ignore xJ
+    /// |> start`.
     val startIgnore: Job<_> -> unit
 
-    /// Queues the job for execution on the global scheduler.
+    /// Queues the job for execution on the global scheduler.  See also:
+    /// `start`, `server`.
+#if DOC
     ///
     /// Note that using this function in a job workflow is not optimal and you
     /// should use `Job.queue` instead.
+#endif
     val inline queue: Job<unit> -> unit
 
-    /// `queueIgnore xJ` is equivalent to `Job.Ignore xJ |> queue`.
+    /// Queues the job for execution on the global scheduler.  `queueIgnore xJ`
+    /// is equivalent to `Job.Ignore xJ |> queue`.
     val queueIgnore: Job<_> -> unit
 
     /// Like `Job.Global.start`, but the given job is known never to return
     /// normally, so the job can be spawned in an even more lightweight manner.
+#if DOC
     ///
     /// Note that using this function in a job workflow is not optimal and you
     /// should use `Job.server` instead.
+#endif
     val server: Job<Void> -> unit
 
     /// Starts running the given job on the global scheduler and then blocks the
@@ -431,7 +441,9 @@ module Job =
   /// `Job.queue`, `Proc.start`.
   val inline start: Job<unit> -> Job<unit>
 
-  /// `startIgnore xJ` is equivalent to `Job.Ignore xJ |> start`.
+  /// Creates a job that immediately starts running the given job as a separate
+  /// concurrent job.  `startIgnore xJ` is equivalent to `Job.Ignore xJ |>
+  /// start`.
   val startIgnore: Job<_> -> Job<unit>
 
   /// Creates a job that schedules the given job to be run as a separate
@@ -451,19 +463,22 @@ module Job =
 #endif
   val inline queue: Job<unit> -> Job<unit>
 
-  /// `queueIgnore xJ` is equivalent to `Job.Ignore xJ |> queue`.
+  /// Creates a job that schedules the given job to be run as a separate
+  /// concurrent job.  `queueIgnore xJ` is equivalent to `Job.Ignore xJ |>
+  /// queue`.
   val queueIgnore: Job<_> -> Job<unit>
 
-  /// Like `Job.start`, but the given job is known never to return normally, so
-  /// the job can be spawned in an even more lightweight manner.
+  /// Creates a job that immediately starts running the given job as a separate
+  /// concurrent job like `start`, but the given job is known never to return
+  /// normally, so the job can be spawned in an even more lightweight manner.
   val server: Job<Void> -> Job<unit>
 
-  /// `Job.startWithFinalizer finalizerJ uJ` is like `Job.start uJ`, but
-  /// attaches a finalizer to the started job.  The finalizer job is started as
-  /// a separate job in case the started job does not return succesfully or
-  /// raise an exception and is garbage collected.  If the job either returns
-  /// normally or raises an exception, the finalizer job is not started.  See
-  /// also: `Proc`.
+  /// Creates a job that immediately starts running the given job as a separate
+  /// concurrent job like `start`, but also attaches a finalizer to the started
+  /// job.  The finalizer job is started as a separate job in case the started
+  /// job does not return succesfully or raise an exception and is garbage
+  /// collected.  If the job either returns normally or raises an exception, the
+  /// finalizer job is not started.  See also: `Proc`.
 #if DOC
   ///
   /// When a job in Hopac is aborted (see `abort`) or is, for example, blocked
@@ -477,8 +492,10 @@ module Job =
 #endif
   val inline startWithFinalizer: finalizer: Job<unit> -> Job<unit> -> Job<unit>
 
-  /// `startWithFinalizerIgnore finalizerJ xJ` is equivalent to `Job.Ignore xJ
-  /// |> startWithFinalizer finalizerJ`.
+  /// Creates a job that immediately starts running the given job as a separate
+  /// concurrent job like `start`, but also attaches a finalizer to the started
+  /// job.  `startWithFinalizerIgnore finalizerJ xJ` is equivalent to
+  /// `Job.Ignore xJ |> startWithFinalizer finalizerJ`.
   val startWithFinalizerIgnore: finalizer: Job<unit> -> Job<_> -> Job<unit>
 
   /////////////////////////////////////////////////////////////////////////////
@@ -511,7 +528,8 @@ module Job =
   /// job.  `thunk u2x` is equivalent to `result () |>> u2x`.
   val inline thunk: (unit -> 'x) -> Job<'x>
 
-  /// `Ignore xJ` is equivalent to `xJ |>> fun _ -> ()`.
+  /// Creates a job like the given job except that the result of the job will be
+  /// `()`.  `Ignore xJ` is equivalent to `xJ |>> ignore`.
   val Ignore: Job<_> -> Job<unit>
 
   /////////////////////////////////////////////////////////////////////////////
@@ -540,17 +558,12 @@ module Job =
 #if DOC
   ///
   /// Note that when a job aborts, it is considered to be equivalent to having
-  /// the job block indefinitely.  This means that the job neither returns
-  /// succesfully nor fails with an exception.  While this may sound like
-  /// something that you should worry about, it is, in fact, frequently just
-  /// what you want.  That is, rather than worry about carefully terminating
-  /// each and every concurrent job, it is preferable to just let them be
-  /// garbage collected.  Only jobs that explicitly hold onto some important
-  /// resource need to be carefully managed.
-  ///
-  /// Note that in order to execute clean-up operations implemented with `using`
-  /// or `tryFinallyFun` or `tryFinallyJob` the job must either return normally
-  /// or raise an exception.
+  /// the job block indefinitely and the job will be garbage collected.  This
+  /// also means that the job neither returns succesfully nor fails with an
+  /// exception.  This can sometimes be just what you want.  However, in order
+  /// to execute clean-up operations implemented with `using` or `tryFinallyFun`
+  /// or `tryFinallyJob`, the job must either return normally or raise an
+  /// exception.  In other words, do not use `abort` in such a case.
 #endif
   val abort: unit -> Job<_>
 
@@ -565,6 +578,11 @@ module Job =
     /// of that job to the given function to build another job which will then
     /// be run.  This is the same as `bind` with the arguments flipped.
     val inline (>>=): Job<'x> -> ('x -> #Job<'y>) -> Job<'y>
+
+    /// Creates a job that is the composition of the given two jobs.  `(x2yJ >=>
+    /// y2zJ) x` is equivalent to `x2yJ x >>= y2zJ` and is much like the `>>`
+    /// operator on ordinary functions.
+    val inline (>=>): ('x -> #Job<'y>) -> ('y -> #Job<'z>) -> 'x -> Job<'z>
 
     /// Creates a job that runs the given two jobs and returns the result of the
     /// second job.  `xJ >>. yJ` is equivalent to `xJ >>= fun _ -> yJ`.
@@ -626,8 +644,10 @@ module Job =
 #endif
   val inline tryIn: Job<'x> -> ('x -> #Job<'y>) -> (exn -> #Job<'y>) -> Job<'y>
 
-  /// `tryInDelay u2xJ x2yJ e2yJ` is equivalent to `tryIn (delay u2xJ) x2yJ
-  /// e2yJ`.
+  /// Implements the `try-in-unless` exception handling construct for jobs.
+  /// Both of the continuation jobs `'x -> Job<'y>`, for success, and `exn ->
+  /// Job<'y>`, for failure, are invoked from a tail position.  `tryInDelay u2xJ
+  /// x2yJ e2yJ` is equivalent to `tryIn (delay u2xJ) x2yJ e2yJ`.
   val inline tryInDelay: (unit -> #Job<'x>) -> ('x -> #Job<'y>) -> (exn -> #Job<'y>) -> Job<'y>
 
   /// Implements the try-with exception handling construct for jobs.
@@ -638,6 +658,9 @@ module Job =
   ///> let tryWith xJ e2xJ = tryIn xJ result e2xJ
 #endif
   val inline tryWith: Job<'x> -> (exn -> #Job<'x>) -> Job<'x>
+
+  /// Implements the try-with exception handling construct for jobs.
+  val inline tryWithDelay: (unit -> #Job<'x>) -> (exn -> #Job<'x>) -> Job<'x>
 
   /// Implements a variation of the `try-finally` exception handling construct
   /// for jobs.  The given action, specified as a function, is executed after
@@ -651,12 +674,17 @@ module Job =
   val tryFinallyFun: Job<'x> -> (unit -> unit) -> Job<'x>
 
   /// Implements a variation of the `try-finally` exception handling construct
+  /// for jobs.  The given action, specified as a function, is executed after
+  /// the job has been run, whether it fails or completes successfully.
+  val tryFinallyFunDelay: (unit -> #Job<'x>) -> (unit -> unit) -> Job<'x>
+
+  /// Implements a variation of the `try-finally` exception handling construct
   /// for jobs.  The given action, specified as a job, is executed after the job
   /// has been run, whether it fails or completes successfully.
+#if DOC
   ///
   /// Note that the workflow notation of F# does not support this operation.  It
   /// only supports the weaker `tryFinallyFun` operation.
-#if DOC
   ///
   /// Reference implementation:
   ///
@@ -666,6 +694,11 @@ module Job =
   ///>    <| fun e -> uJ >>! e
 #endif
   val tryFinallyJob: Job<'x> -> Job<unit> -> Job<'x>
+
+  /// Implements a variation of the `try-finally` exception handling construct
+  /// for jobs.  The given action, specified as a job, is executed after the job
+  /// has been run, whether it fails or completes successfully.
+  val tryFinallyJobDelay: (unit -> #Job<'x>) -> Job<unit> -> Job<'x>
 
   /// Implements the `use` construct for jobs.  The `Dispose` method of the
   /// given disposable object is called after running the job constructed with
@@ -776,7 +809,7 @@ module Job =
   val inline forDownToIgnore: int -> int -> (int -> #Job<_>) -> Job<unit>
 
   /// `whileDo u2b uJ` creates a job that sequentially executes the `uJ` job as
-  /// long as `u2b ()` returns `true`.
+  /// long as `u2b ()` returns `true`.  See also: `whileDoDelay`.
 #if DOC
   ///
   /// Reference implementation:
@@ -791,8 +824,14 @@ module Job =
 #endif
   val inline whileDo: (unit -> bool) -> Job<unit> -> Job<unit>
 
-  /// `whileDoIgnore u2b xJ` is equivalent to `Job.Ignore xJ |> whileDo u2b`.
-  val whileDoIgnore: (unit -> bool) -> Job<_> -> Job<unit>
+  /// `whileDoDelay u2b u2xJ` creates a job that sequentially constructs a job
+  /// with `u2xJ` and executes it as long as `u2b ()` returns `true`.
+  val inline whileDoDelay: (unit -> bool) -> (unit -> #Job<_>) -> Job<unit>
+
+  /// `whileDoIgnore u2b xJ` creates a job that sequentially executes the `xJ`
+  /// job as long as `u2b ()` returns `true`.  `whileDoIgnore u2b xJ` is
+  /// equivalent to `Job.Ignore xJ |> whileDo u2b`.
+  val inline whileDoIgnore: (unit -> bool) -> Job<_> -> Job<unit>
 
   /// `whenDo b uJ` is equivalent to `if b then uJ else Job.unit ()`.
   val inline whenDo: bool -> Job<unit> -> Job<unit>
@@ -857,7 +896,7 @@ module Job =
   ///> let seqCollect (xJs: seq<Job<'x>>) = Job.delay <| fun () ->
   ///>   let xs = ResizeArray<_>()
   ///>   Job.using (xJs.GetEnumerator ()) <| fun xJs ->
-  ///>   Job.whileDo xJs.MoveNext (Job.delay <| fun () ->
+  ///>   Job.whileDoDelay xJs.MoveNext (fun () ->
   ///>     xJs.Current |>> xs.Add) >>%
   ///>   xs
 
@@ -872,7 +911,7 @@ module Job =
   ///
   ///> let seqIgnore (uJs: seq<#Job<unit>>) = Job.delay <| fun () ->
   ///>   Job.using (uJs.GetEnumerator ()) <| fun uJs ->
-  ///>   Job.whileDo uJs.MoveNext (Job.delay <| fun () ->
+  ///>   Job.whileDoDelay uJs.MoveNext (fun () ->
   ///>     uJs.Current)
 #endif
   val seqIgnore: seq<#Job<_>> -> Job<unit>
@@ -906,12 +945,12 @@ module Job =
   /// Reference implementation:
   ///
   ///> let fromBeginEnd doBegin doEnd =
-  ///>   Job.scheduler () >>= fun sr ->
+  ///>   Job.Scheduler.bind <| fun sr ->
   ///>   let xI = ivar ()
   ///>   doBegin <| AsyncCallback (fun ar ->
   ///>     Scheduler.start sr (try xI <-= doEnd ar with e -> xI <-=! e))
   ///>   |> ignore
-  ///>   upcast xI
+  ///>   xI
 #endif
   val inline fromBeginEnd: (AsyncCallback * obj -> IAsyncResult)
                  -> (IAsyncResult -> 'x)
@@ -924,24 +963,72 @@ module Job =
 
   /////////////////////////////////////////////////////////////////////////////
 
-  /// Returns a job that returns the scheduler under which the job is being run.
-  /// This allows interfacing Hopac with existing asynchronous operations that
-  /// do not fall into a pattern that is already supported explicitly.  See, for
-  /// example, the reference implementation of `fromBeginEnd`.  The key is that
-  /// the job that is suspended for the duration of the asynchronous operation
-  /// can then be resumed on the same scheduler.
-  val inline scheduler: unit -> Job<Scheduler>
-
-  /// Returns a job that ensures that the immediately following operation will
-  /// be executed on a Hopac worker thread.
-  val inline switchToWorker: unit -> Job<unit>
-
   /// Given a job, creates a new job that behaves exactly like the given job,
   /// except that the new job obviously cannot be directly downcast to the
   /// underlying type of the given job.  This operation is provided for
   /// debugging purposes.  You can always break abstractions using reflection.
   /// See also: `Alt.paranoid`.
   val paranoid: Job<'x> -> Job<'x>
+
+  /////////////////////////////////////////////////////////////////////////////
+
+  /// Operations for dealing with the scheduler.
+  module Scheduler =
+    /// `bind s2xJ` creates a job that calls the given job constructor with the
+    /// scheduler under which the job is being executed.  `bind` allows
+    /// interfacing Hopac with existing asynchronous operations that do not fall
+    /// into a pattern that is already supported explicitly.
+#if DOC
+    ///
+    /// Hopac jobs are executed under a scheduler.  In almost all cases the
+    /// scheduler is the global scheduler, but Hopac also allows local
+    /// schedulers to be created for special purposes.  A job that is suspended
+    /// for the duration of an external asynchronous operation should be
+    /// explicitly resumed on the same scheduler.
+    ///
+    /// Suppose, for example, that some system provides an asynchronous
+    /// operation with the following signature:
+    ///
+    ///> val opWithCallback: Input
+    ///>                  -> onSuccess: (Output -> unit)
+    ///>                  -> onFailure: (exn -> unit)
+    ///>                  -> unit
+    ///
+    /// We would like to wrap the asynchronous operation as a job with following
+    /// signature:
+    ///
+    ///> val opAsJob: Input -> Job<Output>
+    ///
+    /// This can be done by using a write once variable, which will be filled
+    /// with the result of the operation, and using `bind` to capture the
+    /// current scheduler:
+    ///
+    ///> let opAsJob input = Job.Scheduler.bind <| fun scheduler ->
+    ///>   let resultIVar = ivar ()
+    ///>   let handleWith fill result =
+    ///>     fill resultIVar result |> Scheduler.start scheduler
+    ///>   ioWithCallback input
+    ///>    <| handleWith IVar.fill
+    ///>    <| handleWith IVar.fillFailure
+    ///>   resultIVar
+    ///
+    /// Note that the `Scheduler.start` operation is used to explicitly start
+    /// the fill operation on the captured scheduler.
+    ///
+    /// There are other similar examples as reference implementations of various
+    /// Hopac primitives.  See, for example, the reference implementations of
+    /// `fromBeginEnd` and `Task.awaitJob`.
+
+#endif
+    val inline bind: (Scheduler -> #Job<'x>) -> Job<'x>
+
+    /// Returns a job that returns the scheduler under which the job is being
+    /// run.  `get ()` is equivalent to `bind result`.
+    val inline get: unit -> Job<Scheduler>
+
+    /// Returns a job that ensures that the immediately following operation will
+    /// be executed on a Hopac worker thread.
+    val inline switchToWorker: unit -> Job<unit>
 
   /////////////////////////////////////////////////////////////////////////////
 
@@ -954,7 +1041,7 @@ module Job =
   /// successive executions generate the same sequence of numbers.  In the
   /// extremely rare case that could be a problem, use `TopLevel.queue` or
   /// `switchToWorker`.
-#endif 
+#endif
   module Random =
     /// `bind r2xJ` creates a job that calls the given job constructor with a
     /// pseudo random 64-bit unsigned integer.
@@ -964,6 +1051,7 @@ module Job =
     val inline map: (uint64 -> 'x) -> Job<'x>
 
     /// Returns a job that generates a pseudo random 64-bit unsigned integer.
+    /// `get ()` is equivalent to `bind result`.
     val inline get: unit -> Job<uint64>
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -981,8 +1069,8 @@ module Job =
 /// and Concurrent ML, selective synchronous operations are not limited to
 /// primitive message passing operations (see `Ch.give` and `Ch.take`), but are
 /// instead first-class values (see `choose`) and can be extended with
-/// user-defined code (see `wrap` and `withNack`) allowing the encapsulation of
-/// concurrent protocols as selective synchronous operations.
+/// user-defined code (see `wrap` and `withNackJob`) allowing the encapsulation
+/// of concurrent protocols as selective synchronous operations.
 ///
 /// The idea of alternatives is to allow one to introduce new selective
 /// synchronous operations to be used with non-determinic choice aka `choose`.
@@ -1011,10 +1099,10 @@ module Job =
 /// a `read` operation on the write once variable for the reply.  E.g. request
 /// to receive a timeout event.
 ///
-/// - If you have a non-idempotent operation, you can use `withNack` to send the
-/// arguments, negative acknowledgment token and a channel to the server and
+/// - If you have a non-idempotent operation, you can use `withNackJob` to send
+/// the arguments, negative acknowledgment token and a channel to the server and
 /// then synchronize using a `take` operation on the channel for the reply.  See
-/// `withNack` for an illustrative toy example.
+/// `withNackJob` for an illustrative toy example.
 ///
 /// Note that `Alt` is a subtype of `Job`.  You can use an alternative in any
 /// context that requires a job.
@@ -1062,7 +1150,7 @@ module Alt =
   val raises: exn -> Alt<_>
 
   /// Creates an alternative that is computed at instantiation time with the
-  /// given job.  See also: `withNack`.
+  /// given job.  See also: `withNackJob`.
 #if DOC
   ///
   /// `guard` allows client-server protocols that do not require the server to
@@ -1073,10 +1161,10 @@ module Alt =
   ///
   /// Reference implementation:
   ///
-  ///> let guard xAJ = withNack <| fun _ -> xAJ
+  ///> let guard xAJ = withNackJob <| fun _ -> xAJ
   ///
-  /// Note that, like with `withNack`, it is essential to avoid blocking inside
-  /// `guard`.
+  /// Note that, like with `withNackJob`, it is essential to avoid blocking
+  /// inside `guard`.
 #endif
   val guard: Job<#Alt<'x>> -> Alt<'x>
 
@@ -1104,21 +1192,21 @@ module Alt =
   /// also: `guard`.
 #if DOC
   ///
-  /// `withNack` allows client-server protocols that do require the server to be
-  /// notified when the client aborts the transaction to be encapsulated as
+  /// `withNackJob` allows client-server protocols that do require the server to
+  /// be notified when the client aborts the transaction to be encapsulated as
   /// selective operations.  The negative acknowledgment alternative will be
   /// available in case some other instantiated alternative involved in the
   /// choice is committed to instead.
   ///
-  /// Like `guard`, `withNack` is typically used to encapsulate the client side
-  /// operation of a concurrent protocol.  The client side operation typically
-  /// constructs a request, containing the negative acknowledgment alternative,
-  /// sends it to a server and then returns an alternative that waits for a
-  /// rendezvous with the server.  In case the client later commits to some
-  /// other alternative, the negative acknowledgment token becomes available and
-  /// the server can also abort the operation.
+  /// Like `guard`, `withNackJob` is typically used to encapsulate the client
+  /// side operation of a concurrent protocol.  The client side operation
+  /// typically constructs a request, containing the negative acknowledgment
+  /// alternative, sends it to a server and then returns an alternative that
+  /// waits for a rendezvous with the server.  In case the client later commits
+  /// to some other alternative, the negative acknowledgment token becomes
+  /// available and the server can also abort the operation.
   ///
-  /// Here is a simple example of an operation encapsulated using `withNack`.
+  /// Here is a simple example of an operation encapsulated using `withNackJob`.
   /// The idea is that we have a server that maintains a counter.  Clients can
   /// request the server to increment the counter by a specific amount and
   /// return the incremented counter value.  We further want to make it so that
@@ -1141,7 +1229,7 @@ module Alt =
   ///
   /// Here is the encapsulated client side operation:
   ///
-  ///> let incrementBy n : Alt<int> = Alt.withNack <| fun nack ->
+  ///> let incrementBy n : Alt<int> = Alt.withNackJob <| fun nack ->
   ///>   let replyCh = ch ()
   ///>   counterServer <-+ (n, nack, replyCh) >>%
   ///>   replyCh
@@ -1149,32 +1237,56 @@ module Alt =
   /// The client side operation just sends the negative acknowledgment to the
   /// server as a part of the request.  It is essential that a synchronous
   /// rendezvous via a channel, rather than e.g. a write once variable, is used
-  /// for the reply.  It is also essential to avoid blocking inside `withNack`,
-  /// which is why an asynchronous send is used inside the client side
-  /// operation.
+  /// for the reply.  It is also essential to avoid blocking inside
+  /// `withNackJob`, which is why an asynchronous send is used inside the client
+  /// side operation.
   ///
-  /// Note that if an alternative created with `withNack` is not instantiated,
-  /// then no negative acknowledgment is created.  For example, given an
-  /// alternative of the form `always () <|>? withNack (...)` the `withNack`
-  /// alternative is never instantiated.
+  /// Note that if an alternative created with `withNackJob` is not
+  /// instantiated, then no negative acknowledgment is created.  For example,
+  /// given an alternative of the form `always () <|>? withNackJob (...)` the
+  /// `withNackJob` alternative is never instantiated.
 #endif
-  val withNack: (Promise<unit> -> #Job<#Alt<'x>>) -> Alt<'x>
+  val inline withNackJob: (Promise<unit> -> #Job<#Alt<'x>>) -> Alt<'x>
 
-  /// Returns a new alternative that upon picking time makes it so that the
-  /// given job will be started if the given alternative isn't the one being
-  /// picked.
+  [<Obsolete "`withNack` has been renamed as `withNackJob`.">]
+  val inline withNack: (Promise<unit> -> #Job<#Alt<'x>>) -> Alt<'x>
+
+  /// `withNackFun n2xA` is equivalent to `withNackJob (Job.lift n2xA)`.
+  val inline withNackFun: (Promise<unit> -> #Alt<'x>) -> Alt<'x>
+
+  /// Returns a new alternative that that makes it so that the given job will be
+  /// started as a separated concurrent job if the given alternative isn't the
+  /// one being committed to.  See also: `wrapAbortFun`, `withNackJob`.
 #if DOC
   ///
-  /// Reference implementation:
+  /// `wrapAbortJob` and `withNackJob` have roughly equivalent expressive power
+  /// and `wrapAbortJob` can be expressed in terms of `withNackJob`.  Sometimes
+  /// `wrapAbortJob` more directly fits the desired usage than `withNackJob` and
+  /// should be preferred in those cases.  In particular, consider using
+  /// `wrapAbortJob`, when you have an alternative whose implementation is
+  /// similar to the following reference implementation:
   ///
-  ///> let wrapAbort (abortAct: Job<unit>) (evt: Alt<'x>) : Alt<'x> =
-  ///>   Alt.withNack <| fun abortAlt ->
-  ///>   Job.start (abortAlt >>. abortAct) >>% evt
+  ///> let wrapAbortJob (abortAct: Job<unit>) (evt: Alt<'x>) : Alt<'x> =
+  ///>   Alt.withNackJob <| fun nack ->
+  ///>   Job.start (nack >>. abortAct) >>% evt
+  ///
+  /// Historical note: Originally Concurrent ML only provided a corresponding
+  /// combinator named `wrapAbort`.  Later Concurrent ML changed to provide only
+  /// `withNack` as a primitive, because it is a better fit for most use cases,
+  /// and `wrapAbort` could be expressed in terms of it.  Racket only provides
+  /// `withNack` and, under Racket's model, `withNack` cannot be expressed in
+  /// terms of `wrapAbort`.
 #endif
+  val wrapAbortJob: Job<unit> -> Alt<'x> -> Alt<'x>
+
+  [<Obsolete "`wrapAbort` has been renamed as `wrapAbortJob`.">]
   val wrapAbort: Job<unit> -> Alt<'x> -> Alt<'x>
 
+  /// `wrapAbortFun u2u xA` is equivalent to `wrapAbortJob (Job.thunk u2u) xA`.
+  val wrapAbortFun: (unit -> unit) -> Alt<'x> -> Alt<'x>
+
   /// Creates an alternative that is available when any one of the given
-  /// alternatives is.  See also: `<|>?`.
+  /// alternatives is.  See also: `choosy`, `<|>?`.
   ///
   /// Note that `choose []` is equivalent to `never ()`.
 #if DOC
@@ -1189,6 +1301,33 @@ module Alt =
   /// `choose` as primitive.
 #endif
   val choose: seq<#Alt<'x>> -> Alt<'x>
+
+  /// `choosy xAs` (read: choose array) is an optimized version of `choose xAs`
+  /// when `xAs` is an array.  Do not write `choosy (Seq.toArray xAs)` instead
+  /// of `choose xAs` unless the resulting alternative is reused many times.
+#if DOC
+  ///
+  /// One dominating cost in .Net is memory allocations.  To choose between
+  /// various forms of non-determistic choice, the following low level
+  /// implementation details may be of interest.
+  ///
+  ///> choosy [| ... |]
+  ///
+  /// Creation: 1 array + 1 object.  Use: 1 object.  Total cost: 3 allocations.
+  ///
+  ///> xA1 <|>? xA2
+  ///
+  /// Creation: 1 object.  Use: 1 object.  Total cost: 2 allocations.
+  ///
+  ///> xA1 <|>? xA2 <|>? xA3
+  ///
+  /// Creation: 2 objects.  Use: 2 objects.  Total cost: 4 allocations.
+  ///
+  /// If you are choosy, then when choosing between 2 or 3 alternatives, `<|>?`
+  /// is likely to be fastest.  When choosing between 4 or more alternatives,
+  /// `choosy` is likely to be fastest.
+#endif
+  val choosy: array<#Alt<'x>> -> Alt<'x>
 
   /// `chooser xAs` is like `choose xAs` except that the order in which the
   /// alternatives from the sequence are considered will be determined at random
@@ -1221,7 +1360,7 @@ module Alt =
   module Infixes =
     /// Creates an alternative that is available when either of the given
     /// alternatives is available.  `xA1 <|>? xA2` is an optimized version of
-    /// `choose [xA1; xA2]`.
+    /// `choose [xA1; xA2]`.  See also: `choosy`.
 #if DOC
     ///
     /// The given alternatives are processed in a left-to-right order with
@@ -1266,10 +1405,10 @@ module Alt =
     /// `xA >>!? e` is equivalent to `xA >>=? fun _ -> raise e`.
     val (>>!?): Alt<_> -> exn -> Alt<_>
 
-    /// An alternative that is equivalent to first picking either one of the
-    /// given alternatives and then picking the other alternative.  Note that
-    /// this is not the same as picking the alternatives in a single
-    /// transaction.  Such an operation would require a more complex
+    /// An alternative that is equivalent to first committing to either one of
+    /// the given alternatives and then committing to the other alternative.
+    /// Note that this is not the same as committing to both of the alternatives
+    /// in a single transaction.  Such an operation would require a more complex
     /// synchronization protocol like with the so called Transactional Events.
     val (<+>?): Alt<'a> -> Alt<'b> -> Alt<'a * 'b>
 
@@ -1281,19 +1420,19 @@ module Alt =
   ///
   /// Exceptions from both before and after the commit point can be handled.  An
   /// exception that occurs before a commit point, from the user code in a
-  /// `guard`, `delay`, or `withNack`, results in treating that exception as the
-  /// commit point.
+  /// `guard`, `delay`, or `withNackJob`, results in treating that exception as
+  /// the commit point.
   ///
   /// Note you can also use function or job level exception handling before the
-  /// commit point within the user code in a `guard`, `delay`, or `withNack`.
+  /// commit point within the user code in a `guard`, `delay`, or `withNackJob`.
   val tryIn: Alt<'x> -> ('x -> #Job<'y>) -> (exn -> #Job<'y>) -> Alt<'y>
 
   /// Implements a variation of the `try-finally` exception handling construct
   /// for alternatives.  The given action, specified as a function, is executed
   /// after the alternative has been committed to, whether the alternative fails
   /// or completes successfully.  Note that the action is not executed in case
-  /// the alternative is not committed to.  Use `withNack` to attach the action
-  /// to the non-committed case.
+  /// the alternative is not committed to.  Use `withNackJob` to attach the
+  /// action to the non-committed case.
 #if DOC
   ///
   /// Reference implementation:
@@ -1306,8 +1445,8 @@ module Alt =
   /// for alternatives.  The given action, specified as a job, is executed after
   /// the alternative has been committed to, whether the alternative fails or
   /// completes successfully.  Note that the action is not executed in case the
-  /// alternative is not committed to.  Use `withNack` to attach the action to
-  /// the non-committed case.
+  /// alternative is not committed to.  Use `withNackJob` to attach the action
+  /// to the non-committed case.
 #if DOC
   ///
   /// Reference implementation:
@@ -1541,7 +1680,7 @@ module IVar =
     /// variables such as when creating more complex data structures that make
     /// internal use of write once variables.  Using this to poll write once
     /// variables is not generally a good idea.
-    val inline isFull: IVar<'x> -> bool
+    val isFull: IVar<'x> -> bool
 
     /// Returns the value or raises the failure exception written to the write
     /// once variable.  It is considered an error if the write once variable has
@@ -1599,6 +1738,15 @@ module IVar =
 
 #if DOC
 /// Represents a dynamic latch.
+///
+/// Latches are used for determining when a finite set of parallel jobs is done.
+/// If the size of the set is known a priori, then the latch can be initialized
+/// with the size as initial count and then each job just decrements the latch.
+///
+/// If the size is unknown (dynamic), then a latch is initialized with a count
+/// of one, the a priori known jobs are queued to the latch and then the latch
+/// is decremented.  A queue operation increments the count immediately and
+/// decrements the count after the job is finished.
 ///
 /// Both a first-order interface, with `create`, `increment` and `decrement`
 /// operations, and a higher-order interface, with `within`, `holding`, `queue`
@@ -1764,7 +1912,7 @@ module MVar =
   /// Reference implementation:
   ///
   ///> let modifyJob (x2xyJ: 'x -> Job<'x * 'y>) (xM: MVar<'x>) =
-  ///>   xM >>=? fun x -> x2xyJ x >>= fun (x, y) -> fill xM x >>% y
+  ///>   xM >>=? (x2xyJ >=> fun (x, y) -> fill xM x >>% y)
 #endif
   val inline modifyJob: ('x -> #Job<'x * 'y>) -> MVar<'x> -> Alt<'y>
 
@@ -1855,13 +2003,16 @@ module Promise =
     /// Creates a promise with the given failure exception.
     val inline withFailure: exn -> Promise<'x>
 
+    /// Creates a promise that will never be fulfilled.
+    val never: unit -> Promise<'x>
+
     /// Returns true iff the given promise has already been fulfilled (either
     /// with a value or with a failure).
     ///
     /// This operation is mainly provided for advanced uses of promises such as
     /// when creating more complex data structures that make internal use of
     /// promises.  Using this to poll promises is not generally a good idea.
-    val inline isFulfilled: Promise<'x> -> bool
+    val isFulfilled: Promise<'x> -> bool
 
     /// Returns the value or raises the failure exception that the promise has
     /// been fulfilled with.  It is considered an error if the promise has not
@@ -1979,7 +2130,7 @@ module Extensions =
     ///
     ///> let iterJob x2uJ (xs: seq<'x>) = Job.delay <| fun () ->
     ///>   Job.using (xs.GetEnumerator ()) <| fun xs ->
-    ///>   Job.whileDo xs.MoveNext (Job.delay <| fun () ->
+    ///>   Job.whileDoDelay xs.MoveNext (fun () ->
     ///>     x2uJ xs.Current)
 #endif
     val inline iterJob: ('x -> #Job<unit>) -> seq<'x> -> Job<unit>
@@ -1998,7 +2149,7 @@ module Extensions =
     ///> let mapJob x2yJ (xs: seq<'x>) = Job.delay <| fun () ->
     ///>   let ys = ResizeArray<_>()
     ///>   Job.using (xs.GetEnumerator ()) <| fun xs ->
-    ///>   Job.whileDo xs.MoveNext (Job.delay <| fun () ->
+    ///>   Job.whileDoDelay xs.MoveNext (fun () ->
     ///>     x2yJ xs.Current |>> ys.Add) >>%
     ///>   ys
 #endif
@@ -2098,30 +2249,21 @@ module Extensions =
 
     /// Creates an async operation that starts the given job on the specified
     /// scheduler and then waits until the started job finishes.  See also:
-    /// `Job.scheduler`, `Async.Global.ofJob`.
+    /// `Job.Scheduler`, `Async.Global.ofJob`.
     val ofJobOn: Scheduler -> Job<'x> -> Async<'x>
-
-    /// Operations on the global scheduler.
-    module Global =
-      /// Creates an async operation that starts the given job on the global
-      /// scheduler and then waits until the started job finishes.  See also:
-      /// `Async.ofJobOn`.
-      val ofJob: Job<'x> -> Async<'x>
 
     /// Builder for async workflows.  The methods in this builder delegate to
     /// the default `async` builder.
-    type OnWithSchedulerBuilder =
-      new: SynchronizationContext * Scheduler -> OnWithSchedulerBuilder
+    type [<AbstractClass>] OnWithSchedulerBuilder =
+      new: unit -> OnWithSchedulerBuilder
 
-      val Scheduler: Scheduler
-      val Context: SynchronizationContext
+      abstract Scheduler: Scheduler
+      abstract Context: SynchronizationContext
 
       member inline Bind:  Task<'x> * ('x -> Async<'y>) -> Async<'y>
       member inline Bind:   Job<'x> * ('x -> Async<'y>) -> Async<'y>
       member inline Bind: Async<'x> * ('x -> Async<'y>) -> Async<'y>
 
-      member inline Combine:  Task<unit> * Async<'x> -> Async<'x>
-      member inline Combine:   Job<unit> * Async<'x> -> Async<'x>
       member inline Combine: Async<unit> * Async<'x> -> Async<'x>
 
       member inline Delay: (unit -> Async<'x>) -> Async<'x>
@@ -2134,12 +2276,8 @@ module Extensions =
       member inline ReturnFrom:   Job<'x> -> Async<'x>
       member inline ReturnFrom: Async<'x> -> Async<'x>
 
-      member inline TryFinally:  Task<'x> * (unit -> unit) -> Async<'x>
-      member inline TryFinally:   Job<'x> * (unit -> unit) -> Async<'x>
       member inline TryFinally: Async<'x> * (unit -> unit) -> Async<'x>
 
-      member inline TryWith:  Task<'x> * (exn -> Async<'x>) -> Async<'x>
-      member inline TryWith:   Job<'x> * (exn -> Async<'x>) -> Async<'x>
       member inline TryWith: Async<'x> * (exn -> Async<'x>) -> Async<'x>
 
       member inline Using: 'x * ('x -> Async<'y>) -> Async<'y> when 'x :> IDisposable
@@ -2149,6 +2287,29 @@ module Extensions =
       member inline Zero: unit -> Async<unit>
 
       member inline Run: Async<'x> -> Job<'x>
+
+    /// Operations on the global scheduler.
+    module Global =
+      /// Creates an async operation that starts the given job on the global
+      /// scheduler and then waits until the started job finishes.  See also:
+      /// `Async.ofJobOn`.
+      val ofJob: Job<'x> -> Async<'x>
+
+      /// Creates a builder for running an async workflow on the main
+      /// synchronization context and interoperating with the Hopac global
+      /// scheduler.  The application must call `Hopac.Extensions.Async.setMain`
+      /// to configure Hopac with the main synchronization context.
+      val onMain: unit -> OnWithSchedulerBuilder
+
+    /// Sets the main synchronization context.  This must be called by
+    /// application code in order to use operations such as `onceAltOnMain` and
+    /// `TopLevel.onMain`
+    val setMain: SynchronizationContext -> unit
+
+    /// Gets the main synchronization context.  The main synchronization context
+    /// must be set by application code using `setMain` before calling this
+    /// function.
+    val getMain: unit -> SynchronizationContext
 
   /// Builder for an async operation started on the given synchronization
   /// context with jobs on the specified scheduler wrapped as a job.
@@ -2185,12 +2346,12 @@ module Extensions =
     /// Reference implementation:
     ///
     ///> let awaitJob (xT: Task<'x>) =
-    ///>   Job.scheduler () >>= fun sr ->
+    ///>   Job.Scheduler.bind <| fun sr ->
     ///>   let xI = ivar ()
     ///>   xT.ContinueWith (Action<Threading.Tasks.Task>(fun _ ->
     ///>     Scheduler.start sr (try xI <-= xT.Result with e -> xI <-=! e)))
     ///>   |> ignore
-    ///>   upcast xI
+    ///>   xI
 #endif
     static member inline awaitJob: Task<'x> -> Job<'x>
 
@@ -2224,6 +2385,47 @@ module Extensions =
 //    /// Creates a job that awaits for the given wait handle using the
 //    /// `RegisterWaitForSingleObject` API of the system `ThreadPool`.
 //    member awaitAsJob: Job<unit>
+
+  /// Raised by `onceAltOn` when the associated observable signals the
+  /// `OnCompleted` event.
+  exception OnCompleted
+
+  /// Operations for interfacing Hopac with observables.
+  type IObservable<'x> with
+    /// Creates an alternative that, when instantiated, subscribes to the
+    /// observable on the specified synchronization context for at most one
+    /// event.  Passing `null` as the synchronization context means that the
+    /// subscribe and unsubscribe actions are performed on an unspecified
+    /// thread.
+#if DOC
+    ///
+    /// After an `OnNext` event, the alternative returns the value given by the
+    /// observable.  After an `OnError` event, the alternative raises the
+    /// exception given by the observable.  After an `OnCompleted` event, the
+    /// alternative raises the `OnCompleted` exception.
+    ///
+    /// The alternative becomes available as soon as the observable signals any
+    /// event after which the alternative unsubscribes from the observable.  If
+    /// some other alternative is committed to before the observable signals any
+    /// event, the alternative unsubscribes from the observable.  Note, however,
+    /// that if the current job explicitly aborts while instantiating some other
+    /// alternative involved in the same synchronous operation, there is no
+    /// guarantee that the observable would be unsubscribed from.
+    ///
+    /// Note that, as usual, the alternative can be used many times and even
+    /// concurrently.
+#endif
+    member onceAltOn: SynchronizationContext -> Alt<'x>
+
+    /// This is equivalent to calling `onceAltOn` with the main synchronization
+    /// context.  The application must call `Hopac.Extensions.Async.setMain` to
+    /// configure Hopac with the main synchronization context.
+    member onceAltOnMain: Alt<'x>
+
+    /// `xO.onceAlt` is equivalent to `xO.oneAltOn null`.  Note that it is often
+    /// necessary to specify the synchronization context to subscribe on.  See
+    /// also: `Observable.SubscribeOn`.
+    member onceAlt: Alt<'x>
 
 ////////////////////////////////////////////////////////////////////////////////
 

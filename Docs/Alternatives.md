@@ -7,7 +7,7 @@ hand, the
 [synchronous channels](http://hopac.github.io/Hopac/Hopac.html#def:type%20Hopac.Ch)
 of Hopac support *rendezvous* and the alternative mechanism provides *negative
 acknowledgments* via the
-`withNack`[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNack)
+`withNackJob`[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.withNackJob)
 combinator.  The idea is that alternatives represent *selective synchronous
 operations*.  When synchronizing on a choice of multiple alternatives, only one
 alternative will be *committed to*.  Relying on *idempotency*, *rendezvous*, or
@@ -40,7 +40,7 @@ selective synchronous operations:
 ```fsharp
 open System.Threading
 
-let asyncAsAlt (xA: Async<'x>) : Alt<'x> = Alt.withNack <| fun nack ->
+let asyncAsAlt (xA: Async<'x>) : Alt<'x> = Alt.withNackJob <| fun nack ->
   let rI = ivar ()
   let tokenSource = new CancellationTokenSource ()
   let dispose () =
@@ -91,7 +91,7 @@ let runAll () =
 ```
 
 we can also use
-`Alt.select`[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.select),
+`Alt.choose`[*](http://hopac.github.io/Hopac/Hopac.html#def:val%20Hopac.Alt.choose),
 for example, to start multiple fetches in parallel and then cancel the rest when
 the fastest one is completed:
 
@@ -99,7 +99,7 @@ the fastest one is completed:
 let runFastest () =
   urlList
   |> Seq.map fetchAlt
-  |> Alt.select
+  |> Alt.choose
   |> run
 ```
 
@@ -113,10 +113,10 @@ operations created with `fetchAlt` also work with timeouts:
 
 ```fsharp
 let runWithTimeout seconds =
-  Alt.select [
+  Alt.choose [
     fetchAlt ("MSDN", "http://msdn.microsoft.com/") |>>? fun s ->
       printfn "%s before timeout." s
-    Timer.Global.timeOut (TimeSpan.FromSeconds seconds) |>>? fun () ->
+    timeOut (TimeSpan.FromSeconds seconds) |>>? fun () ->
       printfn "timeout!" ]
   |> run
 ```

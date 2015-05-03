@@ -6,7 +6,7 @@ namespace Hopac.Core {
   using System.Runtime.CompilerServices;
   using System.Threading;
 
-  internal sealed class Pick {
+  internal abstract class Pick : Else {
     internal Nack Nacks;
     internal volatile int State;  // 0 = available, -1 = claimed, 1 = picked
 
@@ -28,8 +28,10 @@ namespace Hopac.Core {
     TryClaim:
       var st = TryClaim(pk);
       if (st < 0) goto TryClaim;
-      if (st == 0)
+      if (st == 0) {
+        wr.Handler = tK;
         tJ.DoJob(ref wr, tK);
+      }
     }
 
     [MethodImpl(AggressiveInlining.Flag)]
@@ -49,7 +51,18 @@ namespace Hopac.Core {
     }
 
     [MethodImpl(AggressiveInlining.Flag)]
-    internal static Nack AddNack(Pick pk, int i0) {
+    internal static int DoPickOpt(Pick pk) {
+      var st = 0;
+      if (null == pk) goto Done;
+    Retry:
+      st = TryPick(pk);
+      if (st < 0) goto Retry;
+    Done:
+      return st;
+    }
+
+    [MethodImpl(AggressiveInlining.Flag)]
+    internal static Nack ClaimAndAddNack(Pick pk, int i0) {
     TryClaim:
       var state = pk.State;
       if (state > 0) goto AlreadyPicked;
@@ -92,6 +105,36 @@ namespace Hopac.Core {
 
     AlreadyPicked:
       return state;
+    }
+  }
+
+  internal abstract class Pick_State<S1> : Pick {
+    internal S1 State1;
+
+    [MethodImpl(AggressiveInlining.Flag)]
+    internal Pick Init() {
+      this.pk = this;
+      return this;
+    }
+
+    [MethodImpl(AggressiveInlining.Flag)]
+    internal Pick Init(S1 s1) {
+      this.pk = this;
+      this.State1 = s1;
+      return this;
+    }
+  }
+
+  internal abstract class Pick_State<S1, S2> : Pick {
+    internal S1 State1;
+    internal S2 State2;
+
+    [MethodImpl(AggressiveInlining.Flag)]
+    internal Pick Init(S1 s1, S2 s2) {
+      this.pk = this;
+      this.State1 = s1;
+      this.State2 = s2;
+      return this;
     }
   }
 }

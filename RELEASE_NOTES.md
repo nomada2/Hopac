@@ -1,3 +1,69 @@
+﻿#### 0.0.0.45 - 10.04.2015
+* Added basic `Stream.buffer` combinator.
+* Renamed `Stream.subscribe*` to `Stream.consume*` to better describe semantics.
+* Doc refinements.
+* Added `Stream.pullOn`, `Stream.skipWhileJob`, `Stream.skipWhileFun`, `Stream.pullOn`, `Stream.foldBack`, `Stream.mapIgnore`, 
+`Stream.ambAll`, `Stream.appendAll`, `Stream.mergeAll` and `Stream.switchAll`
+* Fixed to start reading the serialized variable immediately as documented.
+* Added `Stream.subscribe*` as a shorthand for `Stream.iter* |> queue`.
+* Added mutable `Stream.Property<'x>` that generates property change notifications for e.g. WPF data binding.
+* Added `doFinalizeJob` and `doFinalizeFun`.
+* Experimental wrapper for streams that tracks space safety via phantom types.
+* Changed `groupByJob` and `groupByFun` to take an additional function/job for forming new groups.
+* Added `Stream.tailsMapFun` and `Stream.initsMapFun` these are useful for lifting the `Stream.tails` and `Stream.inits` functions.
+* Added `keepFollowing1` and renamed `keepLatest` to `keepPreceding` to make the naming more symmetric although the concepts of "following" and "preceding" aren't really fully symmetric (unless you allow time travel).
+* A slightly more performant implementation of `keepLatestFuns`.
+* Renamed from `lazify` to `keepLatest`.
+* Lazification of live streams.
+* Rethinking timing and throttling operations.
+* Generalized `joinWith` and `mapJoin`.
+* There is no sleep, only `timeOut`.
+* Added ability to directly bind observables in job computation expressions.
+* Removed superfluous methods from `Async.OnWithSchedulerBuilder`.
+
+#### 0.0.0.44 - 02.03.2015
+* Fixed to properly remove waiter in case it timed out rather than was signalled.
+* Signal when top timed changes to improve timer accuracy.
+* Add a test of the job computation builder.
+* Remove redundant builder methods.
+* Added `Job.tryFinallyFunDelay`, `Job.tryFinallyJobDelay`, `Job.tryWithDelay` and `Job.whileDoDelay`.
+* Added `Stream.mapConst`.
+* Removed `Stream.subscribeOnFirst`, `Stream.subscribeDuring` and `Stream.subscribingTo`, because `Stream.ofObservable` easily covers all of those use cases. 
+
+#### 0.0.0.43 - 28.02.2015
+* Scale work sharing by the number of cores.
+
+#### 0.0.0.42 - 27.02.2015
+* Distribute work more eagerly.
+* Name worker threads.
+* Added monadic composition operator `>=>` for jobs.
+* Updated documentation.
+* Tuning streams.
+* Tweaked Promisesc.
+* Starting to benchmark streams.
+* Avoid an allocation when choosing over lazy promises.
+* Added `Stream.ofObservableOnMain`.
+* Added `Async.getMain`.
+* Added `Stream.ofObservableOn` and `Stream.ofObservable`.
+* Added `IObservable<_>.onceAlt`.
+* Renamed `withNack` as `withNackJob` and `wrapAbort` as `wrapAbortJob`.
+* Added `Alt.wrapAbortFun`.
+* Added `Alt.choosy`, which is an optimized version of `Alt.choose` for arrays.
+* Added `Job.Scheduler.bind` for wrapping external asynchronous events.
+* Added `Alt.withNackFun`.
+* Inlineable `withNack` avoids closure allocation.
+* Added experimental support for running async comptations on the main synchronization context, which must be explicitly configured by application code.
+* Added `IObservable<'x>.onceAltOn` extension method for conveniently interfacing Hopac with suitable observables.
+* Added `TopLevel.startDelay` and `TopLevel.queueDelay` for convenience.
+* Renamed `Builder.Join` to `Builder.Plus` and recognized that `Zero´ must also be abstract.
+
+#### 0.0.0.41 - 11.02.2015
+* Make sure `StaticData` is initialized, fix for #52.
+* Don't capture context, fix for #53.
+* Added `Promise.Now.never`.
+* Optimized anonymous class initialization patterns: small time and space improvement across the board.
+* Another MissingMethodException workaround.
+
 #### 0.0.0.40 - 06.02.2015
 * Changed the priority queue to a simple leftist heap and added some extra logic to purge abandoned timeouts while merging. See #50.
 * Added `TopLevel.memo` as an alias for `Promise.Now.delay`.
